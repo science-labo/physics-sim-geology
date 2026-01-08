@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>地層の傾きシミュレーション</title>
+    <title>地層の傾きシミュレーション（修正版）</title>
     <style>
         body { margin: 0; overflow: hidden; font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #87CEEB; }
         #info {
@@ -13,7 +13,8 @@
             padding: 15px;
             border-radius: 8px;
             box-shadow: 0 0 10px rgba(0,0,0,0.2);
-            pointer-events: none; /* 下の3D操作を邪魔しない */
+            pointer-events: none;
+            user-select: none;
         }
         #controls {
             position: absolute;
@@ -43,9 +44,22 @@
         
         .legend-item { display: flex; align-items: center; margin-bottom: 5px; }
         .color-box { width: 15px; height: 15px; margin-right: 8px; border: 1px solid #333; }
+        
+        /* 読み込み中の表示 */
+        #loading {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            font-size: 24px; font-weight: bold; color: white; text-shadow: 1px 1px 2px black;
+            pointer-events: none;
+        }
     </style>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
 </head>
 <body>
+
+    <div id="loading">読み込み中...</div>
 
     <div id="info">
         <h3>地層の傾きを調べよう</h3>
@@ -64,116 +78,108 @@
         <button onclick="resetCamera()">視点をリセット</button>
     </div>
 
-    <script type="importmap">
-        {
-            "imports": {
-                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
-            }
-        }
-    </script>
-
-    <script type="module">
-        import * as THREE from 'three';
-        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-        import { FontLoader } from 'three/addons/loaders/FontLoader.js';
-        import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
-
-        // シーン、カメラ、レンダラーのセットアップ
-        const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x87CEEB); // 空の色
-        scene.fog = new THREE.Fog(0x87CEEB, 20, 100);
-
-        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-        camera.position.set(0, 15, 30);
-
-        const renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.shadowMap.enabled = true;
-        document.body.appendChild(renderer.domElement);
-
-        // ライトの設定
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-        scene.add(ambientLight);
-        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        dirLight.position.set(10, 20, 10);
-        dirLight.castShadow = true;
-        scene.add(dirLight);
-
-        // コントロール (マウス操作)
-        const controls = new OrbitControls(camera, renderer.domElement);
-        controls.enableDamping = true;
-        
-        // 地面 (グリッドと半透明の地面)
-        const planeGeometry = new THREE.PlaneGeometry(40, 40);
-        const planeMaterial = new THREE.MeshStandardMaterial({ color: 0x228B22, side: THREE.DoubleSide });
-        const ground = new THREE.Mesh(planeGeometry, planeMaterial);
-        ground.rotation.x = -Math.PI / 2;
-        ground.receiveShadow = true;
-        scene.add(ground);
-
-        const gridHelper = new THREE.GridHelper(40, 40, 0x000000, 0x000000);
-        gridHelper.material.opacity = 0.2;
-        gridHelper.material.transparent = true;
-        scene.add(gridHelper);
-
-        // 方角の表示 (N, E, S, W)
-        const loader = new FontLoader();
-        loader.load('https://unpkg.com/three@0.160.0/examples/fonts/helvetiker_regular.typeface.json', function (font) {
-            const addText = (text, x, z) => {
-                const textGeo = new TextGeometry(text, {
-                    font: font, size: 2, height: 0.2,
-                });
-                const textMesh = new THREE.Mesh(textGeo, new THREE.MeshBasicMaterial({ color: 0x000000 }));
-                textMesh.position.set(x, 0.5, z);
-                textMesh.rotation.x = -Math.PI / 2;
-                scene.add(textMesh);
-            };
-            addText('N', 0, -21);
-            addText('S', 0, 21);
-            addText('E', 21, 0);
-            addText('W', -21, 0);
+    <script>
+        // 読み込み完了後に実行
+        window.addEventListener('load', function() {
+            document.getElementById('loading').style.display = 'none';
+            init();
         });
 
-        // ==========================================
-        // 地層データの設定
-        // ==========================================
-        
-        // 地点ごとの定義 (x, z 座標) と 地表の高さ(elevation)
-        // かぎ層(keyBed)の標高を設定することで、傾きを作る
-        // 例: 北(-z)が高い、南(+z)が低い -> 南に傾いている
-        //     西(-x)が高い、東(+x)が低い -> 東に傾いている
-        // 結果: 南東の方角に低くなっている設定
-        
-        const locations = [
-            { name: "A", x: -10, z: -10, elevation: 8, keyBedHeight: 4 }, // 北西 (一番高い)
-            { name: "B", x: 10, z: -5, elevation: 6, keyBedHeight: 1 },   // 北東 (中くらい)
-            { name: "C", x: 0, z: 10, elevation: 5, keyBedHeight: -2 }    // 南 (一番低い)
-        ];
+        let scene, camera, renderer, controls, tiltPlane;
 
-        const layersConfig = [
-            { type: "mud", color: 0x8B4513, height: 2 },
-            { type: "sand", color: 0xF4A460, height: 2 },
-            { type: "key", color: 0xFF0000, height: 0.5 }, // かぎ層
-            { type: "conglo", color: 0xA9A9A9, height: 3 }
-        ];
+        function init() {
+            // シーン、カメラ、レンダラー
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87CEEB); 
+            scene.fog = new THREE.Fog(0x87CEEB, 20, 100);
 
-        // 柱状図を作成する関数
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 15, 30);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            document.body.appendChild(renderer.domElement);
+
+            // ライト
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            dirLight.position.set(10, 20, 10);
+            dirLight.castShadow = true;
+            scene.add(dirLight);
+
+            // コントロール
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            
+            // 地面
+            const planeGeometry = new THREE.PlaneGeometry(40, 40);
+            const planeMaterial = new THREE.MeshStandardMaterial({ color: 0x228B22, side: THREE.DoubleSide });
+            const ground = new THREE.Mesh(planeGeometry, planeMaterial);
+            ground.rotation.x = -Math.PI / 2;
+            ground.receiveShadow = true;
+            scene.add(ground);
+
+            const gridHelper = new THREE.GridHelper(40, 40, 0x000000, 0x000000);
+            gridHelper.material.opacity = 0.2;
+            gridHelper.material.transparent = true;
+            scene.add(gridHelper);
+
+            // 方角ラベル作成関数 (フォント読み込み不要なスプライト方式に変更)
+            function addLabel(text, x, z) {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = 128; canvas.height = 128;
+                ctx.font = "Bold 80px Arial";
+                ctx.fillStyle = "black";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(text, 64, 64);
+                
+                const texture = new THREE.CanvasTexture(canvas);
+                const material = new THREE.SpriteMaterial({ map: texture });
+                const sprite = new THREE.Sprite(material);
+                sprite.position.set(x, 2, z);
+                sprite.scale.set(4, 4, 1);
+                scene.add(sprite);
+            }
+
+            addLabel('N', 0, -21);
+            addLabel('S', 0, 21);
+            addLabel('E', 21, 0);
+            addLabel('W', -21, 0);
+
+            // データ定義
+            const locations = [
+                { name: "A", x: -10, z: -10, elevation: 8, keyBedHeight: 4 },
+                { name: "B", x: 10, z: -5, elevation: 6, keyBedHeight: 1 },
+                { name: "C", x: 0, z: 10, elevation: 5, keyBedHeight: -2 }
+            ];
+
+            // 柱状図作成
+            locations.forEach(createColumn);
+            
+            // 面の作成
+            createTiltPlane(locations);
+
+            animate();
+        }
+
         function createColumn(loc) {
             const group = new THREE.Group();
             group.position.set(loc.x, 0, loc.z);
 
-            // 柱 (ボーリングコア)
-            let currentHeight = loc.keyBedHeight; // かぎ層の下端を基準にする
+            let currentHeight = loc.keyBedHeight;
 
-            // かぎ層より下の層 (簡易的に生成)
+            // 下層(れき)
             const belowGeo = new THREE.CylinderGeometry(0.8, 0.8, 10, 32);
-            const belowMat = new THREE.MeshStandardMaterial({ color: 0xA9A9A9 }); // れき岩
+            const belowMat = new THREE.MeshStandardMaterial({ color: 0xA9A9A9 });
             const belowMesh = new THREE.Mesh(belowGeo, belowMat);
             belowMesh.position.y = currentHeight - 5;
             group.add(belowMesh);
 
-            // かぎ層 (赤)
+            // かぎ層(赤)
             const keyGeo = new THREE.CylinderGeometry(0.8, 0.8, 0.5, 32);
             const keyMat = new THREE.MeshStandardMaterial({ color: 0xFF0000, transparent: true, opacity: 0.9 });
             const keyMesh = new THREE.Mesh(keyGeo, keyMat);
@@ -181,7 +187,6 @@
             group.add(keyMesh);
             currentHeight += 0.5;
 
-            // かぎ層より上の層
             // 砂岩
             const sandGeo = new THREE.CylinderGeometry(0.8, 0.8, 2, 32);
             const sandMat = new THREE.MeshStandardMaterial({ color: 0xF4A460 });
@@ -190,7 +195,7 @@
             group.add(sandMesh);
             currentHeight += 2;
 
-            // 泥岩 (地表まで)
+            // 泥岩(上層)
             const topHeight = loc.elevation - currentHeight;
             if (topHeight > 0) {
                 const mudGeo = new THREE.CylinderGeometry(0.8, 0.8, topHeight, 32);
@@ -200,7 +205,7 @@
                 group.add(mudMesh);
             }
 
-            // 地点名のラベル
+            // 地点名ラベル
             const canvas = document.createElement('canvas');
             const context = canvas.getContext('2d');
             canvas.width = 256; canvas.height = 128;
@@ -209,7 +214,8 @@
             context.font = "Bold 60px Arial";
             context.fillStyle = "black";
             context.textAlign = "center";
-            context.fillText("地点 " + loc.name, 128, 80);
+            context.textBaseline = "middle";
+            context.fillText("地点 " + loc.name, 128, 64);
             
             const spriteMap = new THREE.CanvasTexture(canvas);
             const spriteMaterial = new THREE.SpriteMaterial({ map: spriteMap });
@@ -218,7 +224,7 @@
             sprite.scale.set(6, 3, 1);
             group.add(sprite);
 
-            // 地表からの線（ボーリングの線）
+            // ボーリング線
             const lineGeo = new THREE.BufferGeometry().setFromPoints([
                 new THREE.Vector3(0, loc.elevation, 0),
                 new THREE.Vector3(0, loc.elevation + 2, 0)
@@ -229,31 +235,61 @@
             scene.add(group);
         }
 
-        locations.forEach(createColumn);
-
-        // ==========================================
-        // 傾きを示す面 (かぎ層をつなぐ面)
-        // ==========================================
-        
-        let tiltPlane;
-
-        function createTiltPlane() {
-            // 3点から面を作成する
-            // A, B, C のかぎ層の中心座標を取得
+        function createTiltPlane(locations) {
             const pA = new THREE.Vector3(locations[0].x, locations[0].keyBedHeight + 0.25, locations[0].z);
             const pB = new THREE.Vector3(locations[1].x, locations[1].keyBedHeight + 0.25, locations[1].z);
             const pC = new THREE.Vector3(locations[2].x, locations[2].keyBedHeight + 0.25, locations[2].z);
 
-            // ジオメトリの作成 (三角形を2つ組み合わせて矩形っぽく見せる、あるいは単に大きな平面を傾ける)
-            // ここでは簡易的に、3点を通る巨大な三角形を描画
             const geom = new THREE.BufferGeometry().setFromPoints([pA, pB, pC]);
-            // 見やすくするために、この三角形を含む無限平面に近い大きな面を作りたいが、
-            // 授業用には「3点を結ぶ三角形」が一番わかりやすい
-            
-            // 少し拡張して大きく見せるための計算（ベクトルの外積などは複雑になるので、単純に3点を結ぶ）
+            // 法線計算(光の反射のため)
+            geom.computeVertexNormals();
+
             const material = new THREE.MeshBasicMaterial({ 
                 color: 0xFF0000, 
                 side: THREE.DoubleSide, 
                 transparent: true, 
                 opacity: 0.4,
-                depthTest
+                depthTest: false 
+            });
+            
+            tiltPlane = new THREE.Mesh(geom, material);
+            tiltPlane.renderOrder = 1; 
+            tiltPlane.visible = false;
+            scene.add(tiltPlane);
+
+            // 三角形の枠線
+            const lineMat = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 2 });
+            const lineGeo = new THREE.BufferGeometry().setFromPoints([pA, pB, pC, pA]);
+            const lines = new THREE.Line(lineGeo, lineMat);
+            tiltPlane.add(lines);
+        }
+
+        // グローバル関数
+        window.togglePlane = function() {
+            if(!tiltPlane) return;
+            tiltPlane.visible = !tiltPlane.visible;
+            const btn = document.getElementById('btn-plane');
+            btn.innerText = tiltPlane.visible ? "かぎ層の面を隠す" : "かぎ層の面を表示";
+        };
+
+        window.resetCamera = function() {
+            if(!camera || !controls) return;
+            camera.position.set(0, 15, 30);
+            controls.reset();
+        };
+
+        function animate() {
+            requestAnimationFrame(animate);
+            if(controls) controls.update();
+            if(renderer && scene && camera) renderer.render(scene, camera);
+        }
+        
+        window.addEventListener('resize', () => {
+            if(!camera || !renderer) return;
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
